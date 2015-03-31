@@ -1,4 +1,4 @@
-// Copyright 2012 Cloudera Inc.
+// Copyright 2015 Cloudera Inc.
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
@@ -16,6 +16,9 @@
 #define IMPALA_FIXLEN_ENCODING_H
 
 #include <immintrin.h>
+#define LIKELY(expr) __builtin_expect(!!(expr), 1)
+#define UNLIKELY(expr) __builtin_expect(!!(expr), 0)
+#define L3_CACHE 6144*1024
 
 namespace impala {
 
@@ -62,41 +65,41 @@ class FixLenDecoder {
         return 8;
       }
     } else {
-      __m256i inreg1, inreg2, midreg, ret1, ret2, outreg1, outreg2, tail1, tail2;
-      inreg1 = _mm256_loadu_si256((__m256i const*)(buffle_ + start_index_));
+      __m256i inreg1, inreg2, midreg, ret, tail1, tail2;
+      inreg1 = _mm256_loadu_si256((__m256i const*)(buffer_ + start_index_));
       midreg = _mm256_shuffle_epi8(inreg1, shufflemask1);
       midreg = _mm256_srlv_epi32(midreg, shiftmask1);
       ret = _mm256_and_si256(midreg, clearmask);
-      _mm256i_storeu_si256((__m256i*)val, ret);
+      _mm256_storeu_si256((__m256i*)val, ret);
       midreg = _mm256_shuffle_epi8(inreg1, shufflemask2);
       midreg = _mm256_srlv_epi32(midreg, shiftmask2);
       ret = _mm256_and_si256(midreg, clearmask);
-      _mm256i_storeu_si256((__m256i*)(val + 8), ret);
+      _mm256_storeu_si256((__m256i*)(val + 8), ret);
       midreg = _mm256_shuffle_epi8(inreg1, shufflemask3);
       midreg = _mm256_srlv_epi32(midreg, shiftmask1);
       ret = _mm256_and_si256(midreg, clearmask);
-      _mm256i_storeu_si256((__m256i*)(val + 16), ret);
+      _mm256_storeu_si256((__m256i*)(val + 16), ret);
 
       inreg2 = _mm256_loadu_si256((__m256i const*)(buffer_ + start_index_ + 32));
       midreg = _mm256_shuffle_epi8(inreg2, shufflemask1);
       midreg = _mm256_srlv_epi32(midreg, shiftmask1);
       ret = _mm256_and_si256(midreg, clearmask);
-      _mm256i_storeu_si256((__m256i*)(val + 24), ret);
+      _mm256_storeu_si256((__m256i*)(val + 24), ret);
       midreg = _mm256_shuffle_epi8(inreg2, shufflemask2);
       midreg = _mm256_srlv_epi32(midreg, shiftmask2);
       ret = _mm256_and_si256(midreg, clearmask);
-      _mm256i_storeu_si256((__m256i*)(val + 32), ret);
+      _mm256_storeu_si256((__m256i*)(val + 32), ret);
       midreg = _mm256_shuffle_epi8(inreg2, shufflemask3);
       midreg = _mm256_srlv_epi32(midreg, shiftmask1);
       ret = _mm256_and_si256(midreg, clearmask);
-      _mm256i_storeu_si256((__m256i*)(val + 40), ret);
+      _mm256_storeu_si256((__m256i*)(val + 40), ret);
 
       tail1 = _mm256_shuffle_epi8(inreg1, shufflemask4);
       tail2 = _mm256_shuffle_epi8(inreg2, shufflemask5);
       midreg = _mm256_or_si256(tail1, tail2);
       midreg = _mm256_srlv_epi32(midreg, shiftmask3);
       ret = _mm256_and_si256(midreg, clearmask);
-      _mm256i_storeu_si256((__m256i*)(val + 48), ret);
+      _mm256_storeu_si256((__m256i*)(val + 48), ret);
       start_index_ += 64;
       return 56;
     }
@@ -106,6 +109,7 @@ class FixLenDecoder {
   const char* buffer_;
   int buffer_len_;
   int start_index_;
+  int cache_counter_;
   __m256i shufflemask1;
   __m256i shufflemask2;
   __m256i shufflemask3;
@@ -128,12 +132,8 @@ class FixLenEncoder {
       shiftmask2 = _mm256_set1_epi32(36);
       shiftmask3 = _mm256_set1_epi32(36*2);
 
-      shiftmask1 = _mm256_set_epi32(3, 2, 1, 0, 3, 2, 1, 0);
-      shiftmask2 = _mm256_set_epi32(7, 6, 5, 4, 7, 6, 5, 4);
-      clearmask = _mm256_set1_epi32(0x000001ff);
-
-      clearmask1 = _mm256_set_epi32(0x0, 0x0, 0x0, 0x0003ffff);
-      clearmask2 = _mm256_set_epi32(0x0, 0x0, 0x0, 0x0ffc0000);
+      clearmask1 = _mm256_set_epi32(0x0, 0x0, 0x0, 0x0003ffff, 0x0, 0x0, 0x0, 0x0003ffff);
+      clearmask2 = _mm256_set_epi32(0x0, 0x0, 0x0, 0x0ffc0000, 0x0, 0x0, 0x0, 0x0003ffff);
       shiftmask4 = _mm256_set1_epi32(236);
       shiftmask5 = _mm256_set1_epi32(218);
     }
@@ -177,17 +177,17 @@ class FixLenEncoder {
           outreg2 = _mm256_or_si256(outreg2, midreg);
 
           tail = _mm256_loadu_si256((__m256i const*)(val + 48));
-          tail = _mm256_sllv_epi32(tail, shiftmask1)
+          tail = _mm256_sllv_epi32(tail, shiftmask1);
           midreg = _mm256_and_si256(tail, clearmask1);
-          midreg = _mm256_sllv_epi32(midreg, shiftmask3);
-          outerg1 = _mm256_or_si256(outreg1, midreg);
+          midreg = _mm256_sllv_epi32(midreg, shiftmask4);
+          outreg1 = _mm256_or_si256(outreg1, midreg);
 
           midreg = _mm256_and_si256(tail, clearmask2);
-          midreg = _mm256_sllv_epi32(midreg, shiftmask4);
-          outerg2 = _mm256_or_si256(outreg2, midreg);
+          midreg = _mm256_sllv_epi32(midreg, shiftmask5);
+          outreg2 = _mm256_or_si256(outreg2, midreg);
 
-          _mm256i_storeu_si256((__m256i*)(buffer_ + start_index_), outreg1);
-          _mm256i_storeu_si256((__m256i*)(buffer_ + start_index_ + 32), outreg2);
+          _mm256_storeu_si256((__m256i*)(buffer_ + start_index_), outreg1);
+          _mm256_storeu_si256((__m256i*)(buffer_ + start_index_ + 32), outreg2);
           len -= 56;
           val += 56;
           start_index_ -= 64;
@@ -205,11 +205,8 @@ class FixLenEncoder {
   __m256i shiftmask1;
   __m256i shiftmask2;
   __m256i shiftmask3;
-  __m256i shiftmask1;
-  __m256i shiftmask2;
   __m256i shiftmask4;
   __m256i shiftmask5;
-  __m256i clearmask;
   __m256i clearmask1;
   __m256i clearmask2;
 };
