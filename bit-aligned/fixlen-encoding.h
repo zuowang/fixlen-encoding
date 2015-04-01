@@ -33,12 +33,12 @@ class FixLenDecoder {
     if (bit_width == 16) {
       shufmaskhi = _mm256_setr_epi32(0x80800100, 0x80800302, 0x80800504, 0x80800706,
           0x80800100, 0x80800302, 0x80800504, 0x80800706);
-      shufmasklo = _mm256_setr_epi32(0x80800908, 0x80800b0a, 0x8080d0c, 0x80800f0e,
-          0x80800908, 0x80800b0a, 0x8080d0c, 0x80800f0e);
+      shufmasklo = _mm256_setr_epi32(0x80800908, 0x80800b0a, 0x80800d0c, 0x80800f0e,
+          0x80800908, 0x80800b0a, 0x80800d0c, 0x80800f0e);
       shufmaskhi128 = _mm_setr_epi32(0x80800100, 0x80800302, 0x80800504, 0x80800706);
-      shufmasklo128 = _mm_setr_epi32(0x80800100, 0x80800302, 0x80800504, 0x80800706);
+      shufmasklo128 = _mm_setr_epi32(0x80800908, 0x80800b0a, 0x80800d0c, 0x80800f0e);
     }
-    _mm_prefetch((const char*)buffer_, _MM_HINT_T0);
+    _mm_prefetch(buffer_, _MM_HINT_T0);
   }
 
   FixLenDecoder() {}
@@ -46,18 +46,19 @@ class FixLenDecoder {
   // Returns the number of unpacked data.
   int unpack16(int* val) {
     if (UNLIKELY(start_index_ - cache_counter_ > L3_CACHE)) {
-      _mm_prefetch((const char*)(buffer_ + start_index_), _MM_HINT_T0);
+      _mm_prefetch(buffer_ + start_index_, _MM_HINT_T0);
       cache_counter_ = start_index_;
     }
     if (UNLIKELY(buffer_len_ - start_index_ < 32)) {
       if (UNLIKELY(buffer_len_ - start_index_ < 16)) {
-          int* pval = val;
-          while (start_index_ < buffer_len_) {
-            *pval = *reinterpret_cast<int16_t*>(buffer_ + start_index_);
-            ++pval;
-            start_index_ += 2;
-          }
-          return pval - val;
+        int* pval = val;
+        while (start_index_ < buffer_len_) {
+          *pval = *reinterpret_cast<int16_t*>(
+              const_cast<char*>(buffer_ + start_index_));
+          ++pval;
+          start_index_ += 2;
+        }
+        return pval - val;
       } else {
         __m128i in = _mm_lddqu_si128((__m128i const*)(buffer_ + start_index_));//3
         __m128i tmp = _mm_shuffle_epi8(in, shufmaskhi128);//1
@@ -91,7 +92,7 @@ class FixLenDecoder {
 
 class FixLenEncoder {
  public:
-  FixLenEncoder(const char* buffer, int buffer_len, int bit_width)
+  FixLenEncoder(char* buffer, int buffer_len, int bit_width)
     : buffer_(buffer),
       buffer_len_(buffer_len),
       start_index_(0) {
@@ -109,7 +110,7 @@ class FixLenEncoder {
       if (UNLIKELY(len < 16)) {
         if (UNLIKELY(len < 8)) {
           while (len > 0) {
-            *interpret_cast<int16_t*>(buffer_ + start_index_) = *val;
+            *reinterpret_cast<int16_t*>(buffer_ + start_index_) = *val;
             --len;
             ++val;
             start_index_ += 2;
@@ -144,7 +145,7 @@ class FixLenEncoder {
   }
 
  private:
-  const char* buffer_;
+  char* buffer_;
   int buffer_len_;
   int start_index_;
   __m256i slmask;
