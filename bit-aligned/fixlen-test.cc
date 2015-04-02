@@ -27,8 +27,8 @@ int main(int argc, char **argv) {
     int16_t data[16] = {0,1,2,3,8,9,10,11,4,5,6,7,12,13,14,15};
     const char* src = (const char*)data;
     int dest[64];
-    FixLenDecoder fld(src, 32, 16);
-    int ret = fld.unpack16(dest);
+    FixLenDecoder<16> fld(src, 32);
+    int ret = fld.unpack(dest);
     printf("ret = %d\n", ret);
     for (int i = 0; i < 16; ++i) {
       printf("%d ", dest[i]);
@@ -39,9 +39,9 @@ int main(int argc, char **argv) {
     int16_t data[24] = {0,1,2,3,8,9,10,11,4,5,6,7,12,13,14,15,16,17,18,19,20,21,22,23};
     const char* src = (const char*)data;
     int dest[64];
-    FixLenDecoder fld(src, 48, 16);
+    FixLenDecoder<16> fld(src, 48);
     int ret;
-    while((ret = fld.unpack16(dest)) > 0) {
+    while((ret = fld.unpack(dest)) > 0) {
       printf("ret = %d\n", ret);
       for (int i = 0; i < ret; ++i) {
         printf("%d ", dest[i]);
@@ -53,9 +53,9 @@ int main(int argc, char **argv) {
     int16_t data[26] = {0,1,2,3,8,9,10,11,4,5,6,7,12,13,14,15,16,17,18,19,20,21,22,23,24,25};
     const char* src = (const char*)data;
     int dest[64];
-    FixLenDecoder fld(src, 52, 16);
+    FixLenDecoder<16> fld(src, 52);
     int ret;
-    while((ret = fld.unpack16(dest)) > 0) {
+    while((ret = fld.unpack(dest)) > 0) {
       printf("ret = %d\n", ret);
       for (int i = 0; i < ret; ++i) {
         printf("%d ", dest[i]);
@@ -68,9 +68,9 @@ int main(int argc, char **argv) {
         20,21,22,23,28,29,30,31,32,33,34,35,40,41,42,43,36,37,38,39,44,45,46,47,48,49};
     const char* src = (const char*)data;
     int dest[64];
-    FixLenDecoder fld(src, 100, 16);
+    FixLenDecoder<16> fld(src, 100);
     int ret;
-    while((ret = fld.unpack16(dest)) > 0) {
+    while((ret = fld.unpack(dest)) > 0) {
       printf("ret = %d\n", ret);
       for (int i = 0; i < ret; ++i) {
         printf("%d ", dest[i]);
