@@ -83,8 +83,8 @@ int main(int argc, char **argv) {
     int src[16] = {0,1,2,3,4,5,6,7,8,9,10,11,12,13,14,15};
     int16_t data[64];
     char* dest = (char*)data;
-    FixLenEncoder fle(dest, 128, 16);
-    if (fle.pack16(src, 16)) {
+    FixLenEncoder<16> fle(dest, 128);
+    if (fle.Pack(src, 16)) {
       for (int i = 0; i < 16; ++i) {
         printf("%d ", data[i]);
       }
@@ -95,8 +95,8 @@ int main(int argc, char **argv) {
     int src[24] = {0,1,2,3,4,5,6,7,8,9,10,11,12,13,14,15,16,17,18,19,20,21,22,23};
     int16_t data[64];
     char* dest = (char*)data;
-    FixLenEncoder fle(dest, 128, 16);
-    if (fle.pack16(src, 24)) {
+    FixLenEncoder<16> fle(dest, 128);
+    if (fle.Pack(src, 24)) {
       for (int i = 0; i < 24; ++i) {
         printf("%d ", data[i]);
       }
@@ -107,8 +107,8 @@ int main(int argc, char **argv) {
     int src[26] = {0,1,2,3,4,5,6,7,8,9,10,11,12,13,14,15,16,17,18,19,20,21,22,23,24,25};
     int16_t data[64];
     char* dest = (char*)data;
-    FixLenEncoder fle(dest, 128, 16);
-    if (fle.pack16(src, 26)) {
+    FixLenEncoder<16> fle(dest, 128);
+    if (fle.Pack(src, 26)) {
       for (int i = 0; i < 26; ++i) {
         printf("%d ", data[i]);
       }
@@ -120,8 +120,8 @@ int main(int argc, char **argv) {
         26,27,28,29,30,31,32,33,34,35,36,37,38,39,40,41,42,43,44,45,46,47,48,49};
     int16_t data[64];
     char* dest = (char*)data;
-    FixLenEncoder fle(dest, 128, 16);
-    if (fle.pack16(src, 50)) {
+    FixLenEncoder<16> fle(dest, 128);
+    if (fle.Pack(src, 50)) {
       for (int i = 0; i < 50; ++i) {
         printf("%d ", data[i]);
       }

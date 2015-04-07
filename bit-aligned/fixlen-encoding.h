@@ -44,71 +44,6 @@ class FixLenDecoder {
 };
 
 
-template <>
-class FixLenDecoder<27> {
- public:
-  FixLenDecoder(const char* buffer, int buffer_len)
-    : buffer_(buffer),
-      buffer_len_(buffer_len),
-      start_index_(0),
-      cache_counter_(0) {
-    shufmask1 = _mm256_setr_epi32(0x80800100, 0x80800302, 0x80800504, 0x80800706,
-        0x80800100, 0x80800302, 0x80800504, 0x80800706);
-    shufmask2 = _mm256_setr_epi32(0x80800908, 0x80800b0a, 0x80800d0c, 0x80800f0e,
-        0x80800908, 0x80800b0a, 0x80800d0c, 0x80800f0e);
-    shuf128mask1 = _mm_setr_epi32(0x80800100, 0x80800302, 0x80800504, 0x80800706);
-    shuf128mask2 = _mm_setr_epi32(0x80800908, 0x80800b0a, 0x80800d0c, 0x80800f0e);
-    _mm_prefetch(buffer_, _MM_HINT_T0);
-  }
-
-  FixLenDecoder() {}
-
-  int unpack(int* val) {
-    if (UNLIKELY(start_index_ - cache_counter_ > L3_CACHE)) {
-      _mm_prefetch(buffer_ + start_index_, _MM_HINT_T0);
-      cache_counter_ = start_index_;
-    }
-    if (UNLIKELY(buffer_len_ - start_index_ < 32)) {
-      if (UNLIKELY(buffer_len_ - start_index_ < 16)) {
-        int* pval = val;
-        while (start_index_ < buffer_len_) {
-          *pval = *reinterpret_cast<int16_t*>(
-              const_cast<char*>(buffer_ + start_index_));
-          ++pval;
-          start_index_ += 2;
-        }
-        return pval - val;
-      } else {
-        __m128i in = _mm_lddqu_si128((__m128i const*)(buffer_ + start_index_));//3
-        __m128i tmp = _mm_shuffle_epi8(in, shuf128mask1);//1
-        _mm_storeu_si128((__m128i*)val, tmp);//3
-        tmp = _mm_shuffle_epi8(in, shuf128mask2);//1
-        _mm_storeu_si128((__m128i*)(val + 4), tmp);//3
-        start_index_ += 16;
-        return 8;
-      }
-    } else {
-      __m256i in = _mm256_lddqu_si256((__m256i const*)(buffer_ + start_index_));//3
-      __m256i tmp = _mm256_shuffle_epi8(in, shufmask1);//1
-      _mm256_storeu_si256((__m256i*)val, tmp);//4
-      tmp = _mm256_shuffle_epi8(in, shufmask2);//1
-      _mm256_storeu_si256((__m256i*)(val + 8), tmp);//4
-      start_index_ += 32;
-      return 16;
-    }
-  }
-
- private:
-  const char* buffer_;
-  int buffer_len_;
-  int start_index_;
-  int cache_counter_;
-  __m256i shufmask1;
-  __m256i shufmask2;
-  __m128i shuf128mask1;
-  __m128i shuf128mask2;
-};
-
 //
 //  Example of packed data: 0,1,2,3,8,9,10,11,4,5,6,7,12,13,14,15,16,17,18,19
 //
@@ -289,21 +224,33 @@ class FixLenDecoder<8> {
   __m128i shuf128mask4;
 };
 
-
+template <int bit_width>
 class FixLenEncoder {
  public:
-  FixLenEncoder(char* buffer, int buffer_len, int bit_width)
+  FixLenEncoder(char* buffer, int buffer_len);
+
+  bool Pack(int* val, int len);
+
+ char* buffer() { return buffer_;}
+ private:
+  char* buffer_;
+  int buffer_len_;
+  int start_index_;
+};
+
+template <>
+class FixLenEncoder<16> {
+ public:
+  FixLenEncoder(char* buffer, int buffer_len)
     : buffer_(buffer),
       buffer_len_(buffer_len),
       start_index_(0) {
-    if (bit_width == 16) {
-      shufmaskhi = _mm256_setr_epi32(0x05040100, 0x0d0c0908, 0x80808080, 0x80808080,
-          0x05040100, 0x0d0c0908, 0x80808080, 0x80808080);
-      shufmasklo = _mm256_setr_epi32(0x80808080, 0x80808080, 0x05040100, 0x0d0c0908,
-          0x80808080, 0x80808080, 0x05040100, 0x0d0c0908);
-      shufmaskhi128 = _mm_setr_epi32(0x05040100, 0x0d0c0908, 0x80808080, 0x80808080);
-      shufmasklo128 = _mm_setr_epi32(0x80808080, 0x80808080, 0x05040100, 0x0d0c0908);
-    }
+    shufmaskhi = _mm256_setr_epi32(0x05040100, 0x0d0c0908, 0x80808080, 0x80808080,
+        0x05040100, 0x0d0c0908, 0x80808080, 0x80808080);
+    shufmasklo = _mm256_setr_epi32(0x80808080, 0x80808080, 0x05040100, 0x0d0c0908,
+        0x80808080, 0x80808080, 0x05040100, 0x0d0c0908);
+    shufmaskhi128 = _mm_setr_epi32(0x05040100, 0x0d0c0908, 0x80808080, 0x80808080);
+    shufmasklo128 = _mm_setr_epi32(0x80808080, 0x80808080, 0x05040100, 0x0d0c0908);
   }
 
   //pack16:
@@ -315,7 +262,7 @@ class FixLenEncoder {
   //or
   //|v0v1v2v3|v8v9vavb|v4v5v6v7|vcvdvevf|
   //
-  bool pack16(int* val, int len) {
+  bool Pack(int* val, int len) {
     if (buffer_len_ - start_index_ < len * 2) return false;
     while (len > 0) {
       if (UNLIKELY(len < 16)) {
@@ -364,5 +311,7 @@ class FixLenEncoder {
   __m128i shufmaskhi128;
   __m128i shufmasklo128;
 };
+
 }
+
 #endif
