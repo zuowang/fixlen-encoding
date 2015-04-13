@@ -17,8 +17,10 @@
 
 #include <immintrin.h>
 #include <stdint.h>
+
 #define LIKELY(expr) __builtin_expect(!!(expr), 1)
 #define UNLIKELY(expr) __builtin_expect(!!(expr), 0)
+
 #define L3_CACHE 6144*1024
 
 namespace impala {
@@ -26,7 +28,7 @@ namespace impala {
 template <int bit_width>
 class FixLenDecoder {
  public:
-  FixLenDecoder(const char* buffer, int buffer_len);
+  FixLenDecoder(const char* buffer, int buffer_len, int num_val);
 
   FixLenDecoder();
 
@@ -36,16 +38,38 @@ class FixLenDecoder {
   const char* buffer_;
   int buffer_len_;
   int start_index_;
+  int num_val_;
   int cache_counter_;
 };
 
+//
+// Encoded data are loaded into AVX integer vector register. It's 256
+// bits and hold 28 integers.
+// 0               64             128 0              64             128
+// |  7 9-bits int  |  7 9-bits int  |  7 9-bits int  |  7 9-bits int  |
+//
+//
+// Below is how integer a, b, c, d, e, f, g decoded. Each of them takes
+// up 9 bits.
+// 0                               32                                64
+// |dddddcccccccccbbbbbbbbbaaaaaaaaa|0gggggggggfffffffffeeeeeeeeedddd|
+//
+// Integer a, b, c, e, f, g are decoded by shifting to be hold in a 32
+// bit integer and then clearing the unused bits.
+// Integer d is decoded by shifting to be hold in a 64 bit integer and
+// then combining with another AVX vector register.
+// 0                               32                                64
+// |00000000000000000000000zzzzzzzzz|00000000000000000000000ddddddddd|
+//
+//
 template <>
 class FixLenDecoder<9> {
  public:
-  FixLenDecoder(const char* buffer, int buffer_len)
+  FixLenDecoder(const char* buffer, int buffer_len, int num_val)
     : buffer_(buffer),
       buffer_len_(buffer_len),
       start_index_(0),
+      num_val_(num_val)
       cache_counter_(0) {
       clearmask1 = _mm256_set1_epi32(0x1ff);
       clearmask2 = _mm256_set1_epi64x(0xff8000000);
@@ -62,57 +86,8 @@ class FixLenDecoder<9> {
       _mm_prefetch((const char*)(buffer_ + start_index_), _MM_HINT_T0);
       cache_counter_ = start_index_;
     }
-    if (UNLIKELY(buffer_len_ - start_index_ < 128)) {
-      if (buffer_len_ - start_index_ < 64) {
-        if (buffer_len_ - start_index_ < 16) {
-          return 0;
-          //int *pval = val;
-          //while (start_index_ < buffer_len_) {
-          //  *pval = *reinterpret_cast<int16_t*>(const_cast<char*>(buffer_ + start_index_));
-          //  ++pval;
-          //  start_index_ += 2;
-          //}
-          //return pval - val;
-        } else {
-          __m128i in, tmp;
-          in = _mm_loadu_si128((__m128i const*)(buffer_ + start_index_));//3
-          tmp = _mm_and_si128(in, clear128mask1);//1
-          _mm_storeu_si128((__m128i*)val, tmp);//3
-          tmp = _mm_srli_epi32(in, 9);//1
-          tmp = _mm_and_si128(tmp, clear128mask1);//1
-          _mm_storeu_si128((__m128i*)(val + 4), tmp);//3
-          tmp = _mm_srli_epi32(in, 18);//1
-          tmp = _mm_and_si128(tmp, clear128mask1);//1
-          _mm_storeu_si128((__m128i*)(val + 8), tmp);//3
-
-          start_index_ += 16;
-          return 12;
-        }
-      } else {
-        __m256i in1, in2, a1, a2, tmp;
-        in1 = _mm256_loadu_si256((__m256i const*)(buffer_ + start_index_));//3
-        tmp = _mm256_and_si256(in1, clearmask1);//1
-        _mm256_storeu_si256((__m256i*)val, tmp);//4
-        tmp = _mm256_srli_epi32(in1, 9);//1
-        tmp = _mm256_and_si256(tmp, clearmask1);//1
-        _mm256_storeu_si256((__m256i*)(val + 8), tmp);//4
-        tmp = _mm256_srli_epi32(in1, 18);//1
-        tmp = _mm256_and_si256(tmp, clearmask1);//1
-        _mm256_storeu_si256((__m256i*)(val + 16), tmp);//4
-
-        in2 = _mm256_loadu_si256((__m256i const*)(buffer_ + start_index_ + 32));//3
-        tmp = _mm256_and_si256(in2, clearmask1);//1
-        _mm256_storeu_si256((__m256i*)(val + 24), tmp);//4
-        tmp = _mm256_srli_epi32(in2, 9);//1
-        tmp = _mm256_and_si256(tmp, clearmask1);//1
-        _mm256_storeu_si256((__m256i*)(val + 32), tmp);//4
-        tmp = _mm256_srli_epi32(in2, 18);//1
-        tmp = _mm256_and_si256(tmp, clearmask1);//1
-        _mm256_storeu_si256((__m256i*)(val + 40), tmp);//4
-
-        start_index_ += 64;
-        return 48;
-      }
+    if (UNLIKELY(buffer_len_ - start_index_ < 64)) {
+      return 0;
     } else {
       __m256i in1, in2, a1, a2, tmp, tail;
       in1 = _mm256_loadu_si256((__m256i const*)(buffer_ + start_index_));//3
@@ -145,9 +120,16 @@ class FixLenDecoder<9> {
       _mm256_storeu_si256((__m256i*)(val + 48), tail);//4
 
       start_index_ += 64;
+      num_val -= 56;
+      if (UNLIKELY(num_val < 0)) return num_val + 56;
       return 56;
     }
   }
+
+  __m256i Top() {
+    return _mm256_loadu_si256((__m256i const*)(buffer_ + start_index_));//3
+  }
+
  private:
   const char* buffer_;
   int buffer_len_;
@@ -159,7 +141,6 @@ class FixLenDecoder<9> {
   __m256i shiftmask1;
   __m128i clear128mask1;
 };
-
 
 template <int bit_width>
 class FixLenEncoder {
@@ -183,16 +164,27 @@ class FixLenEncoder {
   __m256i clearmask2;
 };
 
+// Below is how integer a, b, c, d, e, f, g encoded. Each of them takes
+// up 9 bits.
+// 0                               32                                64
+// |dddddcccccccccbbbbbbbbbaaaaaaaaa| gggggggggfffffffffeeeeeeeeedddd|
+//
+// An AVX vector register is 256 bits. It can hold 28 integers. However,
+// we load 8 integers into an AVX vector register at a time. Therefore,
+// we load 7 times, and encode 56 integers into 2 AVX vector registers
+// at each call to Pack().
+//
+// When they are not 56 integers left at the end of encoding, padding
+// the input data buffer to 56 integers.
+//
 template <>
 class FixLenEncoder<9> {
  public:
-  FixLenEncoder(char* buffer, int buffer_len, char* tail, int* tail_len)
+  FixLenEncoder(char* buffer, int buffer_len)
     : buffer_(buffer),
       buffer_len_(buffer_len),
       start_index_(0),
-      tail_(tail),
-      tail_len_(tail_len) {
-    *tail_len_ = 0;
+      num_val(0) {
     clearmask1 = _mm256_setr_epi32(0x0, 0x1ff, 0x0, 0x1ff, 0x0, 0x1ff, 0x0, 0x1ff);
     clearmask2 = _mm256_setr_epi32(0x1ff, 0x0, 0x1ff, 0x0, 0x1ff, 0x0, 0x1ff, 0x0);
     shiftmask1 = _mm256_setr_epi32(0, 4, 0 ,4, 0, 4, 0, 4);
@@ -200,55 +192,10 @@ class FixLenEncoder<9> {
 
   bool Pack(int* val, int len) {
     while (len > 0) {
-      if (UNLIKELY(len < 104)) {
-        if (len < 48) {
-          if (len < 12) {
-            for (int i = 0; i < len; ++i) {
-              *reinterpret_cast<int16_t*>(tail_ + *tail_len_) = *(val + i);
-              *tail_len_ += 2;
-            }
-            break;
-          } else {
-            __m128i out, tmp;
-            out = _mm_loadu_si128((__m128i const*)(val));//3
-            tmp = _mm_loadu_si128((__m128i const*)(val + 4));//3
-            tmp = _mm_slli_epi32(tmp, 9);//1
-            out = _mm_or_si128(out, tmp);//1
-            tmp = _mm_loadu_si128((__m128i const*)(val + 8));//3
-            tmp = _mm_slli_epi32(tmp, 18);//1
-            out = _mm_or_si128(out, tmp);//1
-
-            _mm_storeu_si128((__m128i*)(buffer_ + start_index_), out);//4
-            len -= 12;
-            val += 12;
-            start_index_ += 16;
-          }
-        } else {
-          __m256i out1, out2, tmp, tail;
-          out1 = _mm256_loadu_si256((__m256i const*)(val));//3
-          tmp = _mm256_loadu_si256((__m256i const*)(val + 8));//3
-          tmp = _mm256_slli_epi32(tmp, 9);//1
-          out1 = _mm256_or_si256(out1, tmp);//1
-          tmp = _mm256_loadu_si256((__m256i const*)(val + 16));//3
-          tmp = _mm256_slli_epi32(tmp, 18);//1
-          out1 = _mm256_or_si256(out1, tmp);//1
-
-          out2 = _mm256_loadu_si256((__m256i const*)(val + 24));//3
-          tmp = _mm256_loadu_si256((__m256i const*)(val + 32));//3
-          tmp = _mm256_slli_epi32(tmp, 9);//1
-          out2 = _mm256_or_si256(out2, tmp);//1
-          tmp = _mm256_loadu_si256((__m256i const*)(val + 40));//3
-          tmp = _mm256_slli_epi32(tmp, 18);//1
-          out2 = _mm256_or_si256(out2, tmp);//1
-
-          _mm256_storeu_si256((__m256i*)(buffer_ + start_index_), out1);//4
-          _mm256_storeu_si256((__m256i*)(buffer_ + start_index_ + 32), out2);//4
-          len -= 48;
-          val += 48;
-          start_index_ += 64;
-        }
+      if (UNLIKELY(len < 64)) {
+        return false;
       } else {
-        while(len >= 104) {
+        while(len >= 64) {
           __m256i out1, out2, tmp, tail;
           out1 = _mm256_loadu_si256((__m256i const*)(val));//3
           tmp = _mm256_loadu_si256((__m256i const*)(val + 8));//3
@@ -280,6 +227,7 @@ class FixLenEncoder<9> {
           _mm256_storeu_si256((__m256i*)(buffer_ + start_index_ + 32), out2);//4
           len -= 56;
           val += 56;
+          num_val += 56;
           start_index_ += 64;
         }
       }
@@ -293,8 +241,7 @@ class FixLenEncoder<9> {
   char* buffer_;
   int buffer_len_;
   int start_index_;
-  char* tail_;
-  int* tail_len_;
+  int num_val;
 
   __m256i shiftmask1;
   __m256i clearmask1;
