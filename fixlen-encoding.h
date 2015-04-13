@@ -169,6 +169,13 @@ class FixLenEncoder {
 // 0                               32                                64
 // |dddddcccccccccbbbbbbbbbaaaaaaaaa| gggggggggfffffffffeeeeeeeeedddd|
 //
+// Integer a, b, c, e, f, g are encoded by shifting 0, 9, 18, 4, 13, 22
+// bits accordingly after loading to AVX integer vector register as 32
+// bits integer.
+//
+// Integer d is encoded by shifting 4 bits after load to AVX integer
+// vector register as 64 bits integer.
+//
 // An AVX vector register is 256 bits. It can hold 28 integers. However,
 // we load 8 integers into an AVX vector register at a time. Therefore,
 // we load 7 times, and encode 56 integers into 2 AVX vector registers
