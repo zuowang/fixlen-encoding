@@ -1,4 +1,4 @@
-// Copyright 2012 Cloudera Inc.
+// Copyright 2015 Cloudera Inc.
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
@@ -16,33 +16,34 @@
 #define IMPALA_FIXLEN_ENCODING_H
 
 #include <immintrin.h>
-#include "stdint.h"
+#include <stdint.h>
+
 #define LIKELY(expr) __builtin_expect(!!(expr), 1)
 #define UNLIKELY(expr) __builtin_expect(!!(expr), 0)
+
 #define L3_CACHE 6144*1024
 
 namespace impala {
+
 template <int bit_width>
 class FixLenDecoder {
  public:
   FixLenDecoder(const char* buffer, int buffer_len);
 
-  FixLenDecoder();
-
   // Returns the number of unpacked data.
-  int unpack(int* val);
+  int Unpack(int* val);
 
  private:
   const char* buffer_;
   int buffer_len_;
   int start_index_;
   int cache_counter_;
+
   __m256i shufmaskhi;
   __m256i shufmasklo;
   __m128i shufmaskhi128;
   __m128i shufmasklo128;
 };
-
 
 //
 //  Example of packed data: 0,1,2,3,8,9,10,11,4,5,6,7,12,13,14,15,16,17,18,19
@@ -51,7 +52,6 @@ class FixLenDecoder {
 //  0,1,2,3,8,9,10,11,4,5,6,7,12,13,14,15
 //  For the remain integers. The order of packed data is unchanged:
 //  16,17,18,19
-//
 //
 template <>
 class FixLenDecoder<16> {
@@ -70,9 +70,6 @@ class FixLenDecoder<16> {
     _mm_prefetch(buffer_, _MM_HINT_T0);
   }
 
-  FixLenDecoder() {}
-
-  // unpack16:
   //
   // |v0v1v2v3|v8v9vavb|v4v5v6v7|vcvdvevf|
   //
@@ -82,7 +79,7 @@ class FixLenDecoder<16> {
   // | v8  v9 | va  vb | vc  vd | ve  vf |
   //
   // Returns the number of unpacked data.
-  int unpack(int* val) {
+  int Unpack(int* val) {
     if (UNLIKELY(start_index_ - cache_counter_ > L3_CACHE)) {
       _mm_prefetch(buffer_ + start_index_, _MM_HINT_T0);
       cache_counter_ = start_index_;
@@ -122,6 +119,7 @@ class FixLenDecoder<16> {
   int buffer_len_;
   int start_index_;
   int cache_counter_;
+
   __m256i shufmask1;
   __m256i shufmask2;
   __m128i shuf128mask1;
@@ -162,11 +160,8 @@ class FixLenDecoder<8> {
     _mm_prefetch(buffer_, _MM_HINT_T0);
   }
 
-
-  FixLenDecoder();
-
   // Returns the number of unpacked data.
-  int unpack(int* val) {
+  int Unpack(int* val) {
     if (UNLIKELY(start_index_ - cache_counter_ > L3_CACHE)) {
       _mm_prefetch(buffer_ + start_index_, _MM_HINT_T0);
       cache_counter_ = start_index_;
@@ -231,7 +226,7 @@ class FixLenEncoder {
 
   bool Pack(int* val, int len);
 
- char* buffer() { return buffer_;}
+  char* Buffer() { return buffer_;}
  private:
   char* buffer_;
   int buffer_len_;
@@ -253,7 +248,7 @@ class FixLenEncoder<16> {
     shufmasklo128 = _mm_setr_epi32(0x80808080, 0x80808080, 0x05040100, 0x0d0c0908);
   }
 
-  //pack16:
+  //
   //| v0  v1 | v2  v3 | v4  v5 | v6  v7 |
   //| v8  v9 | va  vb | vc  vd | ve  vf |
   //shuffle
@@ -301,11 +296,14 @@ class FixLenEncoder<16> {
     }
     return true;
   }
- char* buffer() { return buffer_;}
+
+ char* Buffer() { return buffer_;}
+
  private:
   char* buffer_;
   int buffer_len_;
   int start_index_;
+
   __m256i shufmaskhi;
   __m256i shufmasklo;
   __m128i shufmaskhi128;

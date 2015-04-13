@@ -29,14 +29,13 @@ int main(int argc, char **argv) {
       data[i] = i;
     }
     char src[512];
-    int* psrc = (int*)src;
     int dest[64];
 
     char tail[32];
     int tail_len = 0;
-    FixLenEncoder<9> fle(src, 512, tail, &tail_len);
+    FixLenEncoder<9> fle(src, 512);
     if (fle.Pack(data, len)) {
-      FixLenDecoder<9> fld(src, fle.len());
+      FixLenDecoder<9> fld(src, fle.len(), len);
       int ret;
       while((ret = fld.Unpack(dest)) > 0) {
         printf("ret = %d\n", ret);
@@ -45,14 +44,8 @@ int main(int argc, char **argv) {
         }
         printf("\n");
       }
-      printf("tail = %d\n", tail_len / 2);
-      for (int i = 0; i < tail_len; i += 2) {
-        printf("%d ", *reinterpret_cast<int16_t*>(tail + i));
-      }
-      printf("\n");
     }
   }
-
 
   {//benchmark test
     int data[1024*1024];
